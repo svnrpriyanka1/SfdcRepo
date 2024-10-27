@@ -1,0 +1,232 @@
+
+************************************************************************************************************************************************************************
+************************************************************************************************************************************************************************
+
+public class FilesBiSyncHelper {
+    
+    public static Map<Id, Map<String, String>> accGoogleDriveFolderId = new Map<Id, Map<String, String>>();
+    
+    public static void createDefaultFoldersInGoogleDrive(List<SObject> newList){
+        String objectName = newList!=null ? newList[0].id.getSObjectType().getDescribe().getName() : '';
+        Set<Id> queueableRecordIds = new Set<Id>();
+        System.debug('##Inside createDefaultFoldersInGoogleDrive Trigger: '+objectName);
+        System.debug(objectName + ' ## IsBatch()->' +System.IsBatch() +' IsFuture()->'+System.isFuture() + ' IsQueueable()->' +System.isQueueable());
+        
+        //if opportunities are created in bulk/from lead conversion and account folder is not yet created, then opp folder creation is initiated after creating account folder and its folder id is updated
+        if(objectName=='Opportunity' && newList.size()>1){
+            List<Opportunity> oppList = [select Id,Name,FilesBiSync_Folder_Id__c,AccountId,Account.Name,Account.FilesBiSync_Folder_Id__c,Account.CreatedDate from Opportunity where Id in :newList and AccountId!=null];
+            Map<Id,List<Opportunity>> accOppMap_hasFolderId = new Map<Id,List<Opportunity>>();
+            Map<Id,List<Opportunity>> accOppMap_noFolderId = new Map<Id,List<Opportunity>>();
+            Set<Id> accNotCreatedToday = new Set<Id>();
+            for(Opportunity each : oppList){
+                if(each.Account.FilesBiSync_Folder_Id__c!=null){
+                    if(accOppMap_hasFolderId.containsKey(each.AccountId)){
+                        accOppMap_hasFolderId.get(each.Id).add(each);
+                    }else
+                        accOppMap_hasFolderId.put(each.Id, new List<Opportunity>{each});
+                }else{
+                    if(accOppMap_noFolderId.containsKey(each.AccountId)){
+                        accOppMap_noFolderId.get(each.Id).add(each);
+                    }else
+                        accOppMap_noFolderId.put(each.Id, new List<Opportunity>{each});
+                    
+                    if(!accNotCreatedToday.contains(each.AccountId) && each.Account.CreatedDate<System.today())
+                        accNotCreatedToday.add(each.AccountId);
+                    System.debug('##Acc CreatedDate:'+each.Account.CreatedDate+' System.today():'+System.today());
+                }
+            }
+            if(!accOppMap_hasFolderId.isEmpty()){
+                for(List<Opportunity> opps : accOppMap_hasFolderId.values()){
+                    for(Opportunity opp : opps){
+                        if(System.IsBatch() == false && System.isFuture() == false)// && System.isQueueable() == false
+                            FilesBiSyncController.createDefaultFoldersFromTriggerAsync(opp.id, '', 'GoogleDrive'); 
+                        else if(System.IsBatch()){
+                            queueableRecordIds.add(opp.id);
+                        }
+                        else
+                            FilesBiSyncController.createDefaultFoldersFromTrigger(opp.id, '', 'GoogleDrive');
+                    }
+                }
+            }
+            if(!accNotCreatedToday.isEmpty()){
+                System.debug('##Account folder creation initiated from opportunity');
+                for(Id each : accNotCreatedToday){
+                    if(System.IsBatch() == false && System.isFuture() == false)// && System.isQueueable() == false
+                        FilesBiSyncController.createDefaultFoldersFromTriggerAsync(each, '', 'GoogleDrive'); 
+                    else if(System.IsBatch() == true){
+                        queueableRecordIds.add(each);
+                    }
+                    else
+                        FilesBiSyncController.createDefaultFoldersFromTrigger(each, '', 'GoogleDrive'); 
+                }
+            }
+            if(!queueableRecordIds.isEmpty()){
+                FilesBiSyncQueueable createFolderQueue = new FilesBiSyncQueueable(new List<Id>(queueableRecordIds), 'createDefaultFoldersFromTrigger');
+                Id jobId = system.enqueueJob(createFolderQueue);
+            }
+        }
+        else{
+            for(Sobject obj : newList){
+                //Commenting this logic as opp folder is created after acc folder id is updated to avoid the conflict during lead conversion with multiple opps
+                /*if(objectName=='Account'){
+                	createAccountDefaultFoldersInGoogleDrive(newList);
+                }else{*/
+                    if(System.IsBatch() == false && System.isFuture() == false)// && System.isQueueable() == false
+                        FilesBiSyncController.createDefaultFoldersFromTriggerAsync(obj.id, '', 'GoogleDrive'); 
+                    else if(System.IsBatch() == true){
+                        queueableRecordIds.add(obj.id);
+                    }
+                    else
+                        FilesBiSyncController.createDefaultFoldersFromTrigger(obj.id, '', 'GoogleDrive'); 
+                //}
+            }
+            
+            if(queueableRecordIds != Null && !queueableRecordIds.isEmpty()){
+                System.debug('##Folder queueableRecordIds:'+queueableRecordIds);
+                FilesBiSyncQueueable createFolderQueue = new FilesBiSyncQueueable(new List<Id>(queueableRecordIds), 'createDefaultFoldersFromTrigger');
+                Id jobId = system.enqueueJob(createFolderQueue);
+            }
+        }
+    
+    }
+    
+    /*
+     * //
+    public static void createAccountDefaultFoldersInGoogleDrive(List<Account> newList){
+        Set<Id> convertedeAccIds = new Set<Id>();
+        List<Lead> convertedLeads = [select Id,Name,ConvertedAccountId,ConvertedOpportunityId from Lead where ConvertedAccountId in :newList];
+        for(Lead each : convertedLeads){
+            convertedeAccIds.add(each.ConvertedAccountId);
+        }
+        for(Account acc:newList){
+            system.debug('Inside createAccountDefaultFoldersInGoogleDrive acc Trigger:'+acc);
+            //on lead convertion, account folder get created from the converted opp. If opp is not created during lead conversion, then acc folder will be created
+            if(!convertedeAccIds.contains(acc.id)){
+                System.debug('Account-System.IsBatch()->' +System.IsBatch() +'\n System.isFuture()->'+System.isFuture() + '\n System.isQueueable()->' +System.isQueueable());
+                if(System.IsBatch() == false && System.isFuture() == false)// && System.isQueueable() == false
+                    FilesBiSyncController.createDefaultFoldersFromTriggerAsync(acc.id, '', 'GoogleDrive'); 
+                else
+                    FilesBiSyncController.createDefaultFoldersFromTrigger(acc.id, '', 'GoogleDrive');
+            }
+        }
+    }*/
+    
+    public static void moveLeadFolderUnderAccount(Map<Id,Account> newMap, Map<Id,Account> oldMap){
+        Set<Id> accIds = new Set<Id>();
+        for(Account each : newMap.values()){
+            if(each.FilesBiSync_Folder_Id__c!=null && each.FilesBiSync_Folder_Id__c!=oldMap.get(each.Id).FilesBiSync_Folder_Id__c){
+                accIds.add(each.Id);
+                system.debug('each.FilesBiSync_Folder_Id__c='+each.FilesBiSync_Folder_Id__c);
+                system.debug('oldMap.get(each.Id).FilesBiSync_Folder_Id__c='+oldMap.get(each.Id).FilesBiSync_Folder_Id__c);
+            }
+        }
+        system.debug('Inside moveLeadFolderUnderAccount accIds:'+accIds);
+        
+        if(accIds!=null){
+            List<Lead> convertedLeads = [select Id,Name,ConvertedAccountId,ConvertedOpportunityId,FilesBiSync_Folder_Id__c from Lead where ConvertedAccountId in :accIds and FilesBiSync_Folder_Id__c!=null];
+            /*
+             * Commenting this logic as previously duplicate acc folder creation was happening on opp creation from lead conversion. Now opp folder is created after account folder id is updated.
+            List<AccountHistory> accFieldHistoryList = [SELECT Id, AccountId, Field, OldValue, NewValue FROM AccountHistory where AccountId in :accIds and Field='FilesBiSync_Folder_Id__c' order by CreatedDate desc];
+            System.debug('accFieldHistoryList:'+accFieldHistoryList);
+            Map<Id, List<AccountHistory>> accFieldHistoryMap = new Map<Id, List<AccountHistory>>();
+            for(AccountHistory each: accFieldHistoryList){
+                if(each.OldValue==null && each.NewValue!=null){		//on first time update history will be null as commit is not happened to DB, on second time udpate history will have first updated value which should be considered to move lead folder under acc
+                    if(accFieldHistoryMap.containsKey(each.AccountId) && accFieldHistoryMap.get(each.AccountId)!=null){
+                        accFieldHistoryMap.put(each.AccountId, (List<AccountHistory>)accFieldHistoryMap.get(each.AccountId).add(each));
+                        system.debug('accFieldHistoryMap='+accFieldHistoryMap);
+                    }else
+                        accFieldHistoryMap.put(each.AccountId, new List<AccountHistory>{each});
+                    system.debug('accFieldHistoryMap='+accFieldHistoryMap);
+                    System.debug('Map: Id:'+each.AccountId+' Values:'+accFieldHistoryMap.get(each.AccountId));
+                    
+                }
+            }*/
+            for(Lead each : convertedLeads){
+                //if(accFieldHistoryMap.containsKey(each.ConvertedAccountId) && accFieldHistoryMap.get(each.ConvertedAccountId).size()==1){
+                    FilesBiSyncQueueable moveFodlerQueue = new FilesBiSyncQueueable(each.FilesBiSync_Folder_Id__c, newMap.get(each.ConvertedAccountId).FilesBiSync_Folder_Id__c, 'moveGoogleDriveFileOrFolder');
+                    Id jobId = system.enqueueJob(moveFodlerQueue);
+                    system.debug('Lead Folder Id='+each.FilesBiSync_Folder_Id__c);
+                    system.debug('Account Folder Id='+newMap.get(each.ConvertedAccountId).FilesBiSync_Folder_Id__c);
+                //}
+            }
+            
+            //creating opportunity folders after account folder id is updated
+            Map<Id,Opportunity> oppMap = new Map<Id,Opportunity>([Select Id,Name from Opportunity where AccountId in :accIds and FilesBiSync_Folder_Id__c=null and IsClosed=false]);
+            if(!oppMap.isEmpty()){
+                List<CronTrigger> cronTriggers = [SELECT Id, State, PreviousFireTime, NextFireTime, CronExpression, CreatedDate, TimesTriggered ,CronJobDetail.Name FROM CronTrigger where CronJobDetail.Name like '%FilesBiSyncChildRecordFolderProcessor%'];
+                if(cronTriggers.isEmpty()){
+                    Datetime threeMinutesFromNow = Datetime.now().addMinutes(1);
+                    System.debug('Schedule GoogleDrive - FilesBiSyncChildRecordFolderProcessor '+threeMinutesFromNow+' AccIds:'+accIds);
+                    String cronExpression = '' + threeMinutesFromNow.second() + ' ' + threeMinutesFromNow.minute() + ' ' + threeMinutesFromNow.hour() + ' ' + threeMinutesFromNow.day() + ' ' + threeMinutesFromNow.month() + ' ? ' + threeMinutesFromNow.year();
+                    System.schedule('GoogleDrive - FilesBiSyncChildRecordFolderProcessor '+threeMinutesFromNow.getTime(), cronExpression, new FilesBiSyncChildRecordFolderProcessor());
+                }
+            }
+        }
+    }
+    
+    public static void createLeadtDefaultFoldersInGoogleDrive(Map<Id,Lead> newMap){
+        Set<Id> leadIds = new Set<Id>();
+        System.debug('Inside createLeadtDefaultFoldersInGoogleDrive ## IsBatch()->' +System.IsBatch() +' IsFuture()->'+System.isFuture() + ' IsQueueable()->' +System.isQueueable());
+        if(System.IsBatch() == false && System.isFuture() == false){
+            for(Sobject obj : newMap.values()){
+                system.debug('Inside createLeadtDefaultFoldersInGoogleDrive Trigger:'+obj);                
+                FilesBiSyncController.createDefaultFoldersFromTriggerAsync(obj.id, '', 'GoogleDrive'); 
+            }
+        }else{
+            //doen't work when lead is created on landing page data insert. Even though lead is created in future method of LandingPageHelper, lead trigger is exceuted synchronously.
+            //FilesBiSyncController.createDefaultFoldersFromTrigger(obj.id, '', 'GoogleDrive');
+            
+            FilesBiSyncQueueable createFolders = new FilesBiSyncQueueable(new List<Id>(newMap.keySet()), 'createDefaultFoldersFromTrigger');
+            Id jobId = System.enqueueJob(createFolders);
+        }
+        
+    }
+
+}
+
+
+
+************************************************************************************************************************************************************************
+************************************************************************************************************************************************************************
+
+
+
+
+public class FilesBiSyncQueueable implements Queueable,Database.AllowsCallouts {
+
+    String srcFolderOrFileId;
+    String targetFolderId;
+    List<Id> recordIds = new List<Id>();
+    String event;
+    
+    public FilesBiSyncQueueable(String param1, String param2, String event){
+        if(event=='moveGoogleDriveFileOrFolder'){
+            this.srcFolderOrFileId = param1;
+            this.targetFolderId = param2;   
+            this.event = event;
+        }
+    }
+    
+    public FilesBiSyncQueueable(List<Id> recordIds, String event){
+        if(event=='createDefaultFoldersFromTrigger'){
+            this.recordIds = recordIds;
+            this.event = event;
+        }
+    }
+    
+    public void execute(QueueableContext context) { 
+        if(event=='moveGoogleDriveFileOrFolder' && srcFolderOrFileId!=null && targetFolderId!=null){
+            FilesBiSyncController.moveFolder(srcFolderOrFileId, targetFolderId, System.Label.FilesBiSync_Google_Drive);
+        }else if(event=='createDefaultFoldersFromTrigger' && !recordIds.isEmpty()){
+            for(Id each : recordIds){
+                System.debug('Inside Queueable Class ## IsBatch()->' +System.IsBatch() +' IsFuture()->'+System.isFuture() + ' IsQueueable()->' +System.isQueueable());
+                /*if(System.IsBatch() == true)
+                {
+                    FilesBiSyncController.createDefaultFoldersFromTriggerAsync(each, '', 'GoogleDrive'); 
+                }else
+                    FilesBiSyncController.createDefaultFoldersFromTrigger(each, '', 'GoogleDrive');*/
+                FilesBiSyncController.createDefaultFoldersFromTriggerAsync(each, '', 'GoogleDrive'); 
+            }
+        }
+    }
+}
